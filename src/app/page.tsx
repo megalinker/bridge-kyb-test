@@ -13,7 +13,7 @@ export default function Home() {
   const [events, setEvents] = useState<BridgeEvent[]>([]);
   const [kybUrl, setKybUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  
+
   // The email currently being tracked (The "Session")
   const [activeEmail, setActiveEmail] = useState<string | null>(null);
 
@@ -60,17 +60,16 @@ export default function Home() {
     setKybUrl(null);
 
     try {
-      const res = await fetch('/api/create-kyb', { 
+      const res = await fetch('/api/create-kyb', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData)
       });
-      
+
       const data = await res.json();
-      
-      if (data.url) {
-        setKybUrl(data.url);
-        // Set this as the active session email
+
+      if (data.kyc_link) {
+        setKybUrl(data.kyc_link);
         setActiveEmail(formData.email);
         localStorage.setItem('bridge_active_email', formData.email);
       } else {
@@ -94,7 +93,7 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-900">
       <div className="max-w-4xl mx-auto space-y-6">
-        
+
         <header className="flex justify-between items-center border-b border-slate-200 pb-6">
           <div>
             <h1 className="text-2xl md:text-3xl font-bold text-slate-900 tracking-tight">Bridge Webhook Dashboard</h1>
@@ -104,10 +103,10 @@ export default function Home() {
               </p>
             )}
           </div>
-          
+
           <div className="flex items-center gap-4">
             {activeEmail && (
-              <button 
+              <button
                 onClick={handleLogout}
                 className="text-xs font-medium text-red-600 hover:text-red-800 underline"
               >
@@ -129,29 +128,29 @@ export default function Home() {
           <h2 className="text-lg font-semibold mb-4">
             {activeEmail ? "Generate a new KYB Link" : "Identify Yourself to Begin"}
           </h2>
-          
+
           <form onSubmit={handleCreateKyb} className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
             <div className="space-y-1">
               <label className="text-xs font-bold text-slate-500 uppercase ml-1">Business Email</label>
-              <input 
+              <input
                 required
                 type="email"
                 placeholder="company@example.com"
                 className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:bg-white outline-none transition-all"
                 value={formData.email}
-                onChange={(e) => setFormData({...formData, email: e.target.value})}
+                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
               />
             </div>
 
             <div className="space-y-1">
               <label className="text-xs font-bold text-slate-500 uppercase ml-1">Full Name</label>
-              <input 
+              <input
                 required
                 type="text"
                 placeholder="Jane Doe"
                 className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:bg-white outline-none transition-all"
                 value={formData.fullName}
-                onChange={(e) => setFormData({...formData, fullName: e.target.value})}
+                onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
               />
             </div>
 
@@ -165,9 +164,9 @@ export default function Home() {
               </button>
 
               {kybUrl && (
-                <a 
-                  href={kybUrl} 
-                  target="_blank" 
+                <a
+                  href={kybUrl}
+                  target="_blank"
                   rel="noreferrer"
                   className="w-full md:w-auto text-center px-6 py-3 bg-green-100 text-green-700 rounded-xl font-bold border border-green-200 hover:bg-green-200 transition-all"
                 >
@@ -188,7 +187,7 @@ export default function Home() {
               </span>
             </h2>
           </div>
-          
+
           {!activeEmail ? (
             <div className="text-center py-20 bg-white rounded-2xl border border-dashed border-slate-300 text-slate-400">
               <p className="text-sm font-medium">Enter your email above to see your private webhook events.</p>
@@ -217,7 +216,7 @@ export default function Home() {
                       {new Date(evt.receivedAt).toLocaleTimeString()}
                     </span>
                   </div>
-                  
+
                   {/* Event Payload */}
                   <div className="p-5">
                     <pre className="bg-slate-900 text-green-400 p-4 rounded-xl text-xs overflow-x-auto font-mono leading-relaxed max-h-[300px]">
