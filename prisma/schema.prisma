@@ -1,0 +1,17 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql" // or "cockroachdb" if using that
+  url      = env("DATABASE_URL")
+}
+
+model BridgeEvent {
+  id         String   @id // This will be the Bridge Event ID
+  type       String
+  payload    Json
+  receivedAt DateTime @default(now())
+}
