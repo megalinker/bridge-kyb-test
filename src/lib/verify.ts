@@ -1,39 +1,69 @@
 import crypto from 'crypto';
 
+function normalizePem(pem?: string): string {
+  if (!pem) return "";
+  let s = pem.trim();
+
+  // strip surrounding quotes if present (common in .env files)
+  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+      s = s.slice(1, -1);
+  }
+
+  // support JSON-escaped newlines (fixes Vercel env var issues)
+  s = s.replace(/\\n/g, "\n").replace(/\r/g, "");
+
+  return s.trim();
+}
+
 export function verifyBridgeSignature(
-  signatureHeader: string | null,
   rawBody: string,
-  publicKeyPem: string
+  signatureHeader: string | null,
+  publicKeyPem?: string
 ): boolean {
-  if (!signatureHeader || !publicKeyPem) return false;
+  if (!publicKeyPem) {
+    console.error("Missing BRIDGE_WEBHOOK_PUBLIC_KEY_PEM");
+    return false;
+  }
+  if (!signatureHeader) {
+    console.error("Missing signature header");
+    return false;
+  }
+
+  const parts = signatureHeader.split(",").map(p => p.trim());
+  const timestamp = parts.find(p => p.startsWith("t="))?.split("=", 2)[1];
+  const signatureB64 = parts.find(p => p.startsWith("v0="))?.split("=", 2)[1];
+
+  if (!timestamp || !signatureB64) {
+    console.error("Invalid signature header format");
+    return false;
+  }
+
+  // Replay guard (~10 minutes)
+  if (Date.now() - Number(timestamp) > 10 * 60 * 1000) {
+    console.error("Webhook timestamp stale");
+    return false;
+  }
+
+  const signedPayload = `${timestamp}.${rawBody}`;
 
   try {
-    const parts = signatureHeader.split(',');
-    const timestampPart = parts.find((p) => p.startsWith('t='));
-    const signaturePart = parts.find((p) => p.startsWith('v0='));
+    const key = crypto.createPublicKey({ 
+      key: normalizePem(publicKeyPem), 
+      format: "pem" 
+    });
 
-    if (!timestampPart || !signaturePart) return false;
+    // 1) SHA256 over "<timestamp>.<rawBody>"
+    const firstHash = crypto.createHash("sha256").update(Buffer.from(signedPayload, "utf8")).digest();
 
-    const t = timestampPart.substring(2);
-    const v0 = signaturePart.substring(3);
+    // 2) RSA-SHA256 verify using the *hash bytes* as the message.
+    const verifier = crypto.createVerify("RSA-SHA256");
+    verifier.update(firstHash);
+    verifier.end();
 
-    // Check freshness (10 mins)
-    const now = Date.now();
-    const eventTime = parseInt(t, 10);
-    if (isNaN(eventTime) || Math.abs(now - eventTime) > 10 * 60 * 1000) {
-      return false;
-    }
-
-    const signedPayload = `${t}.${rawBody}`;
-    const verifier = crypto.createVerify('sha256');
-    verifier.update(signedPayload);
-    
-    // Fix newlines if they were escaped in ENV vars
-    const formattedKey = publicKeyPem.replace(/\\n/g, '\n');
-
-    return verifier.verify(formattedKey, v0, 'base64');
-  } catch (error) {
-    console.error('Verification error:', error);
+    const sig = Buffer.from(signatureB64, "base64");
+    return verifier.verify(key, sig);
+  } catch (e: any) {
+    console.error(`Verification error: ${e?.message || e}`);
     return false;
   }
 }
