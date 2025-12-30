@@ -7,21 +7,18 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const email = searchParams.get('email');
 
-  if (!email) {
-    // If no email is provided, return empty or a 401
-    return NextResponse.json([]);
-  }
+  if (!email) return NextResponse.json([]);
 
   try {
     const events = await prisma.bridgeEvent.findMany({
       where: {
-        // This filters the JSON "payload" column. 
-        // Bridge events like kyc_link.created have email at payload.email
-        // Other events have it at payload.customer.email
         OR: [
-          { payload: { path: ['email'], equals: email } },
-          { payload: { path: ['customer', 'email'], equals: email } },
-          { payload: { path: ['event_object', 'email'], equals: email } }
+          // Bridge KYB Link objects: payload.event_object.email
+          { payload: { path: ['event_object', 'email'], equals: email } },
+          // Bridge Customer objects: payload.event_object.email
+          { payload: { path: ['event_object', 'email_address'], equals: email } },
+          // Backup for other event structures
+          { payload: { path: ['email'], equals: email } }
         ]
       },
       orderBy: { receivedAt: 'desc' },
