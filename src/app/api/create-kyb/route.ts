@@ -26,7 +26,7 @@ export async function POST(req: Request) {
             body: JSON.stringify({
                 type: "business",
                 email: email,
-                full_name: fullName, // Pass the name if provided
+                full_name: fullName,
                 redirect_url: baseUrl
             })
         });
@@ -38,8 +38,10 @@ export async function POST(req: Request) {
             throw new Error(data.message || JSON.stringify(data));
         }
 
+        // Bridge returns: { kyc_link, tos_link, customer_id, ... }
         return NextResponse.json(data);
     } catch (error: any) {
+        console.error("Create KYB Error:", error);
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }

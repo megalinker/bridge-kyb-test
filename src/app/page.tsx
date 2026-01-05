@@ -9,12 +9,27 @@ type BridgeEvent = {
   receivedAt: string;
 };
 
+type CustomerData = {
+  id: string;
+  status: string; // 'not_started' | 'review' | 'active' | 'rejected'
+  endorsements?: { status: string; reason?: string }[];
+  rejection_reasons?: { reason: string }[];
+  email?: string;
+};
+
 export default function Home() {
+  // Event Log State
   const [events, setEvents] = useState<BridgeEvent[]>([]);
+  
+  // Active Session State
+  const [activeEmail, setActiveEmail] = useState<string | null>(null);
+  const [customerId, setCustomerId] = useState<string | null>(null);
+  
+  // Data / UI State
+  const [customerData, setCustomerData] = useState<CustomerData | null>(null);
   const [kybUrl, setKybUrl] = useState<string | null>(null);
   const [tosUrl, setTosUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [activeEmail, setActiveEmail] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const [formData, setFormData] = useState({
@@ -22,20 +37,29 @@ export default function Home() {
     fullName: ''
   });
 
-  // Derived State: Check if ToS is accepted based on the webhook feed
-  const hasAcceptedToS = events.some(evt =>
-    evt.payload?.event_object?.has_accepted_terms_of_service === true ||
-    evt.payload?.event_object?.tos_status === 'approved'
-  );
+  // Derived State: Check if ToS is accepted based on the webhook feed OR live customer data
+  const hasAcceptedToS = 
+    events.some(evt =>
+      evt.payload?.event_object?.has_accepted_terms_of_service === true ||
+      evt.payload?.event_object?.tos_status === 'approved'
+    ) || 
+    (customerData?.endorsements?.some(e => e.status === 'approved') ?? false); // Heuristic for sandbox if endorsements exist
 
+  // 1. Load Session on Mount
   useEffect(() => {
     const savedEmail = localStorage.getItem('bridge_active_email');
+    const savedCustomerId = localStorage.getItem('bridge_active_customer_id');
+    
     if (savedEmail) {
       setActiveEmail(savedEmail);
       setFormData(prev => ({ ...prev, email: savedEmail }));
     }
+    if (savedCustomerId) {
+      setCustomerId(savedCustomerId);
+    }
   }, []);
 
+  // 2. Poll for Webhook Events (Database)
   useEffect(() => {
     if (!activeEmail) return;
 
@@ -47,20 +71,43 @@ export default function Home() {
           setEvents(data);
         }
       } catch (err) {
-        console.error("Polling error", err);
+        console.error("Event polling error", err);
       }
     };
 
     fetchEvents();
-    const interval = setInterval(fetchEvents, 2000);
+    const interval = setInterval(fetchEvents, 3000);
     return () => clearInterval(interval);
   }, [activeEmail]);
+
+  // 3. Poll for Live Customer Status (Bridge API Proxy)
+  useEffect(() => {
+    if (!customerId) return;
+
+    const fetchCustomerStatus = async () => {
+      try {
+        const res = await fetch(`/api/customer?id=${customerId}`);
+        if (res.ok) {
+          const data = await res.json();
+          setCustomerData(data);
+        }
+      } catch (err) {
+        console.error("Customer status polling error", err);
+      }
+    };
+
+    fetchCustomerStatus();
+    // Poll every 5 seconds to update status "Active" or "Rejected" in real-time
+    const interval = setInterval(fetchCustomerStatus, 5000);
+    return () => clearInterval(interval);
+  }, [customerId]);
 
   const handleCreateKyb = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setKybUrl(null);
     setTosUrl(null);
+    setCustomerData(null);
 
     try {
       const res = await fetch('/api/create-kyb', {
@@ -74,8 +121,16 @@ export default function Home() {
       if (data.kyc_link) {
         setKybUrl(data.kyc_link);
         setTosUrl(data.tos_link);
+        
         setActiveEmail(formData.email);
         localStorage.setItem('bridge_active_email', formData.email);
+
+        // Capture Customer ID immediately
+        if (data.customer_id) {
+            setCustomerId(data.customer_id);
+            localStorage.setItem('bridge_active_customer_id', data.customer_id);
+        }
+
       } else {
         alert("Bridge API Error: " + (data.error || JSON.stringify(data)));
       }
@@ -88,7 +143,10 @@ export default function Home() {
 
   const handleLogout = () => {
     localStorage.removeItem('bridge_active_email');
+    localStorage.removeItem('bridge_active_customer_id');
     setActiveEmail(null);
+    setCustomerId(null);
+    setCustomerData(null);
     setEvents([]);
     setKybUrl(null);
     setTosUrl(null);
@@ -127,7 +185,69 @@ export default function Home() {
           </div>
         </header>
 
-        {/* SETUP FORM */}
+        {/* 1. STATUS DASHBOARD (Only visible if we have a customer ID) */}
+        {customerId && (
+            <section className="bg-slate-900 p-6 rounded-2xl shadow-lg border border-slate-700 text-slate-300 relative overflow-hidden">
+                <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none">
+                    <svg className="w-32 h-32" fill="currentColor" viewBox="0 0 20 20"><path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-3a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 15v3h-3zM4.75 12.094A5.973 5.973 0 004 15v3H1v-3a3 3 0 013.75-2.906z" /></svg>
+                </div>
+
+                <div className="flex justify-between items-start mb-6 relative z-10">
+                    <div>
+                        <h2 className="text-white font-bold text-lg">Live Customer Status</h2>
+                        <p className="text-xs text-slate-400 font-mono mt-1">{customerId}</p>
+                    </div>
+                    <div className="flex flex-col items-end gap-1">
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Current State</span>
+                        <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide shadow-sm ${
+                            customerData?.status === 'active' ? 'bg-green-500 text-white' :
+                            customerData?.status === 'rejected' ? 'bg-red-500 text-white' :
+                            customerData?.status === 'review' ? 'bg-orange-500 text-white' :
+                            'bg-slate-700 text-slate-300'
+                        }`}>
+                            {customerData?.status || 'INITIALIZING...'}
+                        </span>
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 relative z-10">
+                    <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700">
+                        <p className="text-[10px] font-bold uppercase text-slate-500 mb-2">Endorsements (Capabilities)</p>
+                        {customerData?.endorsements && customerData.endorsements.length > 0 ? (
+                            <ul className="space-y-2">
+                                {customerData.endorsements.map((end, idx) => (
+                                    <li key={idx} className="flex justify-between text-xs text-slate-300">
+                                        <span>Customer Approval</span>
+                                        <span className={end.status === 'approved' ? 'text-green-400' : 'text-yellow-500'}>
+                                            {end.status}
+                                        </span>
+                                    </li>
+                                ))}
+                            </ul>
+                        ) : (
+                            <p className="text-xs text-slate-500 italic">No endorsements yet</p>
+                        )}
+                    </div>
+
+                    <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700">
+                        <p className="text-[10px] font-bold uppercase text-slate-500 mb-2">Rejection Reasons</p>
+                        {customerData?.rejection_reasons && customerData.rejection_reasons.length > 0 ? (
+                            <ul className="space-y-1">
+                                {customerData.rejection_reasons.map((r, idx) => (
+                                    <li key={idx} className="text-xs text-red-400 font-medium">
+                                        • {r.reason}
+                                    </li>
+                                ))}
+                            </ul>
+                        ) : (
+                            <p className="text-xs text-slate-500 italic">None</p>
+                        )}
+                    </div>
+                </div>
+            </section>
+        )}
+
+        {/* 2. SETUP FORM */}
         <section className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
           <h2 className="text-lg font-semibold mb-4">
             {activeEmail ? "Update or Create New Link" : "1. Start Onboarding Flow"}
@@ -196,7 +316,7 @@ export default function Home() {
                   </a>
                 </div>
 
-                {/* Step 2: ToS (Legal) - CONDITIONAL HIDE */}
+                {/* Step 2: ToS (Legal) */}
                 <div className="bg-slate-800 p-5 rounded-xl border border-slate-700 space-y-3 relative overflow-hidden">
                   <div>
                     <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest">Step 2</p>
@@ -224,11 +344,11 @@ export default function Home() {
           )}
         </section>
 
-        {/* WEBHOOK FEED */}
+        {/* 3. WEBHOOK FEED */}
         <section className="space-y-4 pb-20">
           <div className="flex justify-between items-center px-1">
             <h2 className="text-lg font-bold flex items-center gap-2">
-              Webhook Feed
+              Webhook Feed (DB)
               <span className="bg-slate-200 text-slate-600 text-[10px] px-2 py-0.5 rounded-full">
                 {events.length}
               </span>
@@ -242,7 +362,8 @@ export default function Home() {
           ) : events.length === 0 ? (
             <div className="text-center py-20 bg-white rounded-2xl border border-slate-200 text-slate-400">
               <div className="animate-pulse mb-3 text-blue-500 text-2xl">⚡</div>
-              <p className="text-sm font-medium text-slate-600">Waiting for events for <b>{activeEmail}</b></p>
+              <p className="text-sm font-medium text-slate-600">Waiting for webhook events for <b>{activeEmail}</b></p>
+              <p className="text-xs mt-2 text-slate-400">Note: Webhooks may be delayed or inactive in Sandbox.</p>
             </div>
           ) : (
             <div className="space-y-4">
