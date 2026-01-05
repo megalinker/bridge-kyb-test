@@ -1,6 +1,8 @@
+// src/app/page.tsx
+
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 
 type BridgeEvent = {
   id: string;
@@ -30,6 +32,7 @@ export default function Home() {
   const [kybUrl, setKybUrl] = useState<string | null>(null);
   const [tosUrl, setTosUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false); // NEW: State for manual refresh button
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const [formData, setFormData] = useState({
@@ -37,13 +40,13 @@ export default function Home() {
     fullName: ''
   });
 
-  // Derived State: Check if ToS is accepted based on the webhook feed OR live customer data
+  // Derived State: Check if ToS is accepted
   const hasAcceptedToS = 
     events.some(evt =>
       evt.payload?.event_object?.has_accepted_terms_of_service === true ||
       evt.payload?.event_object?.tos_status === 'approved'
     ) || 
-    (customerData?.endorsements?.some(e => e.status === 'approved') ?? false); // Heuristic for sandbox if endorsements exist
+    (customerData?.endorsements?.some(e => e.status === 'approved') ?? false);
 
   // 1. Load Session on Mount
   useEffect(() => {
@@ -80,27 +83,29 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [activeEmail]);
 
-  // 3. Poll for Live Customer Status (Bridge API Proxy)
-  useEffect(() => {
+  // NEW: Shared function to fetch customer status (used by Polling AND Manual Button)
+  const fetchCustomerStatus = useCallback(async () => {
     if (!customerId) return;
-
-    const fetchCustomerStatus = async () => {
-      try {
-        const res = await fetch(`/api/customer?id=${customerId}`);
-        if (res.ok) {
-          const data = await res.json();
-          setCustomerData(data);
-        }
-      } catch (err) {
-        console.error("Customer status polling error", err);
+    setIsRefreshing(true);
+    try {
+      const res = await fetch(`/api/customer?id=${customerId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setCustomerData(data);
       }
-    };
-
-    fetchCustomerStatus();
-    // Poll every 5 seconds to update status "Active" or "Rejected" in real-time
-    const interval = setInterval(fetchCustomerStatus, 5000);
-    return () => clearInterval(interval);
+    } catch (err) {
+      console.error("Customer status polling error", err);
+    } finally {
+      setIsRefreshing(false);
+    }
   }, [customerId]);
+
+  // 3. Poll for Live Customer Status
+  useEffect(() => {
+    fetchCustomerStatus(); // Initial fetch
+    const interval = setInterval(fetchCustomerStatus, 5000); // Auto-poll
+    return () => clearInterval(interval);
+  }, [fetchCustomerStatus]);
 
   const handleCreateKyb = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -125,7 +130,6 @@ export default function Home() {
         setActiveEmail(formData.email);
         localStorage.setItem('bridge_active_email', formData.email);
 
-        // Capture Customer ID immediately
         if (data.customer_id) {
             setCustomerId(data.customer_id);
             localStorage.setItem('bridge_active_customer_id', data.customer_id);
@@ -185,7 +189,7 @@ export default function Home() {
           </div>
         </header>
 
-        {/* 1. STATUS DASHBOARD (Only visible if we have a customer ID) */}
+        {/* 1. STATUS DASHBOARD */}
         {customerId && (
             <section className="bg-slate-900 p-6 rounded-2xl shadow-lg border border-slate-700 text-slate-300 relative overflow-hidden">
                 <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none">
@@ -194,7 +198,22 @@ export default function Home() {
 
                 <div className="flex justify-between items-start mb-6 relative z-10">
                     <div>
-                        <h2 className="text-white font-bold text-lg">Live Customer Status</h2>
+                        <div className="flex items-center gap-3">
+                            <h2 className="text-white font-bold text-lg">Live Customer Status</h2>
+                            
+                            {/* --- NEW REFRESH BUTTON --- */}
+                            <button 
+                                onClick={fetchCustomerStatus}
+                                disabled={isRefreshing}
+                                className="flex items-center gap-1 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-300 text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded transition-all active:scale-95 disabled:opacity-50"
+                            >
+                                <svg className={`w-3 h-3 ${isRefreshing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                </svg>
+                                {isRefreshing ? 'Checking...' : 'Refresh'}
+                            </button>
+                            {/* -------------------------- */}
+                        </div>
                         <p className="text-xs text-slate-400 font-mono mt-1">{customerId}</p>
                     </div>
                     <div className="flex flex-col items-end gap-1">
@@ -212,7 +231,7 @@ export default function Home() {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 relative z-10">
                     <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700">
-                        <p className="text-[10px] font-bold uppercase text-slate-500 mb-2">Endorsements (Capabilities)</p>
+                        <p className="text-[10px] font-bold uppercase text-slate-500 mb-2">Endorsements</p>
                         {customerData?.endorsements && customerData.endorsements.length > 0 ? (
                             <ul className="space-y-2">
                                 {customerData.endorsements.map((end, idx) => (
