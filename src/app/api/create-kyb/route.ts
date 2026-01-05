@@ -16,8 +16,7 @@ export async function POST(req: Request) {
         }
 
         // 2. Call Bridge API with the user's data
-        // We send full_name and email to pre-fill the KYB form
-        const response = await fetch('https://api.bridge.xyz/v0/kyc_links', {
+        const response = await fetch('https://api.sandbox.bridge.xyz/v0/kyc_links', {
             method: 'POST',
             headers: {
                 'Api-Key': BRIDGE_API_KEY || '',
