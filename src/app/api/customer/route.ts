@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
   if (!customerId) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
 
   try {
-    const response = await fetch(`https://api.bridge.xyz/v0/customers/${customerId}`, {
+    const response = await fetch(`https://api.sandbox.bridge.xyz/v0/customers/${customerId}`, {
       headers: {
         'Api-Key': apiKey || '',
         'Content-Type': 'application/json',
