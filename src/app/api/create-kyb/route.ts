@@ -5,6 +5,7 @@ export async function POST(req: Request) {
     const BRIDGE_API_KEY = process.env.BRIDGE_API_KEY;
     const { protocol, host } = new URL(req.url);
     const baseUrl = `${protocol}//${host}`;
+    const redirectUrl = `${baseUrl}/success`;
 
     try {
         // 1. Read user input from the Frontend
@@ -27,7 +28,7 @@ export async function POST(req: Request) {
                 type: "business",
                 email: email,
                 full_name: fullName,
-                redirect_url: baseUrl
+                redirect_url: redirectUrl
             })
         });
 

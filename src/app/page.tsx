@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 
-// --- Types based on your actual Bridge API Response ---
+// --- Types ---
 type RequirementLogic = string | { all_of?: RequirementLogic[] } | { any_of?: RequirementLogic[] };
 
 type BridgeEndorsement = {
@@ -35,12 +35,11 @@ type BridgeEvent = {
   receivedAt: string;
 };
 
-// --- Helper: format snake_case to Title Case ---
+// --- Helpers ---
 const formatLabel = (str: string) => {
   return str.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
 };
 
-// --- Helper: Recursively extract missing fields from Bridge's complex logic tree ---
 const extractMissingFields = (logic: RequirementLogic | undefined): string[] => {
   if (!logic) return [];
   if (typeof logic === 'string') return [logic];
@@ -54,7 +53,6 @@ const extractMissingFields = (logic: RequirementLogic | undefined): string[] => 
   }
   
   if ('any_of' in logic && Array.isArray(logic.any_of)) {
-    // For UI simplicity, we tag these as "One of: ..."
     const options = logic.any_of.flatMap(extractMissingFields);
     if (options.length > 0) {
       fields.push(`One of: [${options.join(' / ')}]`);
@@ -75,11 +73,21 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [isInsideIframe, setIsInsideIframe] = useState(false);
 
   const [formData, setFormData] = useState({ email: '', fullName: '' });
 
-  // 1. Load Session
+  // 1. Check if we are the parent or the child (iframe)
   useEffect(() => {
+    // If window.self !== window.top, we are running inside the iframe (after redirect)
+    if (typeof window !== 'undefined' && window.self !== window.top) {
+        setIsInsideIframe(true);
+    }
+  }, []);
+
+  // 2. Load Session
+  useEffect(() => {
+    if (isInsideIframe) return; // Don't load session logic if we are just the success page
     const savedEmail = localStorage.getItem('bridge_active_email');
     const savedCustomerId = localStorage.getItem('bridge_active_customer_id');
     if (savedEmail) {
@@ -87,11 +95,11 @@ export default function Home() {
       setFormData(prev => ({ ...prev, email: savedEmail }));
     }
     if (savedCustomerId) setCustomerId(savedCustomerId);
-  }, []);
+  }, [isInsideIframe]);
 
-  // 2. Poll Webhooks
+  // 3. Poll Webhooks
   useEffect(() => {
-    if (!activeEmail) return;
+    if (!activeEmail || isInsideIframe) return;
     const fetchEvents = async () => {
       try {
         const res = await fetch(`/api/events?email=${encodeURIComponent(activeEmail)}`);
@@ -101,18 +109,18 @@ export default function Home() {
     fetchEvents();
     const interval = setInterval(fetchEvents, 3000);
     return () => clearInterval(interval);
-  }, [activeEmail]);
+  }, [activeEmail, isInsideIframe]);
 
-  // 3. Fetch Customer Status
+  // 4. Fetch Customer Status
   const fetchCustomerStatus = useCallback(async () => {
-    if (!customerId) return;
+    if (!customerId || isInsideIframe) return;
     setIsRefreshing(true);
     try {
       const res = await fetch(`/api/customer?id=${customerId}`);
       if (res.ok) setCustomerData(await res.json());
     } catch (err) { console.error(err); } 
     finally { setIsRefreshing(false); }
-  }, [customerId]);
+  }, [customerId, isInsideIframe]);
 
   useEffect(() => {
     fetchCustomerStatus();
@@ -168,7 +176,6 @@ export default function Home() {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  // Determine the display color for status badges
   const getStatusColor = (status?: string) => {
     switch(status) {
       case 'active': return 'bg-green-500 text-white';
@@ -181,6 +188,18 @@ export default function Home() {
     }
   };
 
+  // --- SPECIAL RENDER FOR IFRAME REDIRECT (SUCCESS STATE) ---
+  if (isInsideIframe) {
+      return (
+          <div className="min-h-screen bg-green-50 flex flex-col items-center justify-center p-4">
+              <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-4 text-3xl">✓</div>
+              <h1 className="text-xl font-bold text-green-800">Process Complete</h1>
+              <p className="text-green-700 mt-2 text-center">You can close this verification window now.</p>
+          </div>
+      );
+  }
+
+  // --- MAIN RENDER ---
   return (
     <main className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-900">
       <div className="max-w-5xl mx-auto space-y-6">
@@ -207,8 +226,7 @@ export default function Home() {
         {/* --- DETAILED CUSTOMER DASHBOARD --- */}
         {customerId && (
             <section className="bg-slate-900 rounded-2xl shadow-xl border border-slate-700 text-slate-300 overflow-hidden">
-                
-                {/* Dashboard Header */}
+                {/* Header */}
                 <div className="p-6 border-b border-slate-700 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-slate-800/50">
                     <div>
                         <div className="flex items-center gap-3">
@@ -218,9 +236,6 @@ export default function Home() {
                                 disabled={isRefreshing}
                                 className="flex items-center gap-1 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-white text-[10px] font-bold uppercase px-2 py-1 rounded transition-all active:scale-95 disabled:opacity-50"
                             >
-                                <svg className={`w-3 h-3 ${isRefreshing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                                </svg>
                                 {isRefreshing ? 'Syncing...' : 'Sync'}
                             </button>
                         </div>
@@ -240,20 +255,12 @@ export default function Home() {
                                 {customerData?.status ? formatLabel(customerData.status) : 'LOADING...'}
                             </span>
                         </div>
-                        {/* TOS Status */}
-                        <div className="flex flex-col items-end">
-                            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Terms</span>
-                            <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide shadow-sm ${customerData?.has_accepted_terms_of_service ? 'bg-green-500 text-white' : 'bg-red-500 text-white'}`}>
-                                {customerData?.has_accepted_terms_of_service ? 'ACCEPTED' : 'PENDING'}
-                            </span>
-                        </div>
                     </div>
                 </div>
 
                 {/* Dashboard Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-slate-700">
-                    
-                    {/* COL 1: Endorsements & Missing Data */}
+                    {/* COL 1: Endorsements */}
                     <div className="p-6 md:col-span-2 space-y-6">
                         <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
                             <span className="w-2 h-2 rounded-full bg-blue-500"></span>
@@ -274,8 +281,6 @@ export default function Home() {
                                               {formatLabel(end.status)}
                                           </span>
                                       </div>
-
-                                      {/* Show Missing Requirements */}
                                       {!isComplete && missing.length > 0 ? (
                                           <div className="bg-slate-900/50 p-3 rounded-lg border border-slate-700/50">
                                               <p className="text-[10px] font-bold text-orange-400 uppercase mb-2">Missing Information:</p>
@@ -290,8 +295,7 @@ export default function Home() {
                                           </div>
                                       ) : isComplete ? (
                                         <div className="text-xs text-green-400 flex items-center gap-1">
-                                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                                            All requirements met
+                                            ✓ All requirements met
                                         </div>
                                       ) : (
                                         <p className="text-xs text-slate-500 italic">Processing...</p>
@@ -305,10 +309,8 @@ export default function Home() {
                         )}
                     </div>
 
-                    {/* COL 2: Capabilities & Details */}
+                    {/* COL 2: Capabilities */}
                     <div className="p-6 space-y-6 bg-slate-800/20">
-                        
-                        {/* Capabilities */}
                         <div>
                             <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-4 flex items-center gap-2">
                                 <span className="w-2 h-2 rounded-full bg-purple-500"></span>
@@ -329,23 +331,6 @@ export default function Home() {
                                 )}
                             </div>
                         </div>
-
-                        {/* Rejection Reasons (if any) */}
-                        {customerData?.rejection_reasons && customerData.rejection_reasons.length > 0 && (
-                            <div className="pt-6 border-t border-slate-700">
-                                <h3 className="text-sm font-bold text-red-400 uppercase tracking-wider mb-2">Rejection Reasons</h3>
-                                <ul className="list-disc pl-4 space-y-1">
-                                    {customerData.rejection_reasons.map((r, i) => (
-                                        <li key={i} className="text-xs text-red-300">{r.reason}</li>
-                                    ))}
-                                </ul>
-                            </div>
-                        )}
-                        
-                        {/* Timestamps */}
-                        <div className="pt-6 border-t border-slate-700 text-[10px] text-slate-600 font-mono space-y-1">
-                            <p>Last Sync: {new Date().toLocaleTimeString()}</p>
-                        </div>
                     </div>
                 </div>
             </section>
@@ -354,8 +339,10 @@ export default function Home() {
         {/* --- FORM SECTION --- */}
         <section className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
           <h2 className="text-lg font-semibold mb-4 text-slate-800">
-            {activeEmail ? "Update or Create New Link" : "1. Start Onboarding Flow"}
+            {activeEmail ? "Verification Session" : "Start Onboarding Flow"}
           </h2>
+          
+          {/* Show form only if not deeply engaged in KYC or if user wants to reset */}
           <form onSubmit={handleCreateKyb} className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
             <div className="space-y-1">
               <label className="text-xs font-bold text-slate-500 uppercase ml-1">Business Email</label>
@@ -367,34 +354,38 @@ export default function Home() {
             </div>
             <div className="md:col-span-2 pt-2">
               <button type="submit" disabled={loading} className="w-full md:w-auto bg-blue-600 text-white px-8 py-3 rounded-xl hover:bg-blue-700 font-bold disabled:opacity-50 transition-all">
-                {loading ? 'Processing...' : 'Generate Onboarding Links'}
+                {loading ? 'Processing...' : 'Generate / Refresh Link'}
               </button>
             </div>
           </form>
 
-          {/* ONBOARDING LINKS */}
+          {/* --- EMBEDDED IFRAME SECTION --- */}
           {kybUrl && (
-            <div className="mt-8 p-6 bg-slate-50 rounded-2xl border border-slate-200">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-                  <h4 className="font-bold text-sm mb-3">1. Identity Verification</h4>
-                  <a href={kybUrl} target="_blank" rel="noreferrer" className="block text-center w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-sm transition-all">
-                    Open KYB Link
-                  </a>
+            <div className="mt-8 pt-8 border-t border-slate-100">
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="font-bold text-slate-800">Onboarding Interface</h3>
+                    <div className="flex gap-2">
+                        {tosUrl && !customerData?.has_accepted_terms_of_service && (
+                             <a href={tosUrl} target="_blank" rel="noreferrer" className="text-xs font-bold bg-white border border-slate-300 px-3 py-1.5 rounded hover:bg-slate-50 text-slate-700">
+                                Open TOS ↗
+                             </a>
+                        )}
+                        <a href={kybUrl} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center">
+                            Open in new tab (Fallback) ↗
+                        </a>
+                    </div>
                 </div>
-                <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-                  <h4 className="font-bold text-sm mb-3">2. Terms of Service</h4>
-                  {customerData?.has_accepted_terms_of_service ? (
-                     <div className="py-2.5 text-center bg-green-50 text-green-600 border border-green-200 rounded-lg font-bold text-sm">
-                        ✓ Accepted
-                     </div>
-                  ) : (
-                    <a href={tosUrl || '#'} target="_blank" rel="noreferrer" className="block text-center w-full py-2.5 bg-white border-2 border-slate-200 hover:border-slate-300 text-slate-700 rounded-lg font-bold text-sm transition-all">
-                        Sign Terms
-                    </a>
-                  )}
+
+                {/* THE LITERAL FRAME COMPONENT */}
+                <div className="w-full rounded-2xl border border-slate-200 overflow-hidden shadow-sm bg-slate-50">
+                    <iframe 
+                        key={kybUrl} // Force reload if URL changes
+                        src={kybUrl}
+                        className="w-full h-[700px] border-none bg-white"
+                        title="Bridge KYB Verification"
+                        allow="camera; microphone; geolocation; encrypted-media;" // Permissions required for ID verification
+                    />
                 </div>
-              </div>
             </div>
           )}
         </section>
