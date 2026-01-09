@@ -3,7 +3,10 @@
 import { useEffect, useState, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 
-// --- TYPES ---
+// -----------------------------------------------------------------------------
+// TYPES
+// -----------------------------------------------------------------------------
+
 type RequirementLogic = string | { all_of?: RequirementLogic[] } | { any_of?: RequirementLogic[] };
 
 type BridgeEndorsement = {
@@ -36,7 +39,10 @@ type BridgeEvent = {
   receivedAt: string;
 };
 
-// --- HELPER FUNCTIONS ---
+// -----------------------------------------------------------------------------
+// HELPER FUNCTIONS
+// -----------------------------------------------------------------------------
+
 const formatLabel = (str: string) => {
   return str.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
 };
@@ -63,7 +69,10 @@ const extractMissingFields = (logic: RequirementLogic | undefined): string[] => 
   return fields;
 };
 
-// --- MAIN CONTENT COMPONENT ---
+// -----------------------------------------------------------------------------
+// MAIN CONTENT COMPONENT
+// -----------------------------------------------------------------------------
+
 function HomeContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -81,6 +90,10 @@ function HomeContent() {
   
   const [loading, setLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  
+  // Controls the "Please continue in new tab" overlay
+  const [isSyncing, setIsSyncing] = useState(false); 
+  
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [formData, setFormData] = useState({ email: '', fullName: '' });
 
@@ -95,7 +108,6 @@ function HomeContent() {
       if (res.ok) {
         const data = await res.json();
         setCustomerData(data);
-        // console.log("[Main] Synced Customer Status:", data.status);
       }
     } catch (err) { console.error(err); } 
     finally { setIsRefreshing(false); }
@@ -138,7 +150,8 @@ function HomeContent() {
     // If the iframe is open BUT the status says we are done, close the iframe.
     if (iframeUrl && isPartOneDone) {
         console.log(`[Main] Status transitioned to '${customerData.status}'. Closing Iframe.`);
-        setIframeUrl(null); // <--- This triggers the UI update to show the Success Message
+        setIframeUrl(null); 
+        setIsSyncing(false); // Remove overlay if iframe is gone
     }
   }, [customerData, iframeUrl]);
 
@@ -187,16 +200,23 @@ function HomeContent() {
                 if (Date.now() - data.timestamp < 30000) {
                     console.log("[Main] Received Signal from Tab 2:", data.type);
                     
+                    // 1. Show overlay immediately because user is interacting elsewhere
+                    setIsSyncing(true);
+
+                    // 2. Determine action based on signal type
                     if (data.type === 'BRIDGE_INQUIRY_RESUME' && data.inquiryId) {
-                         // Case: Bridge gave us an ID to resume the flow
+                         // Case: Bridge gave us an ID to resume the flow inside the iframe
                          const resumeUrl = generateWidgetUrl(null, data.inquiryId);
                          setIframeUrl(resumeUrl);
+                         
+                         // Remove overlay after a short delay so user can continue here
+                         setTimeout(() => setIsSyncing(false), 2500);
                     } 
                     
-                    // Always refresh data immediately when a signal arrives
+                    // 3. Always refresh data immediately when a signal arrives
                     fetchCustomerStatus();
                     
-                    // Clear the signal so we don't process it twice
+                    // 4. Clear the signal so we don't process it twice
                     localStorage.removeItem('bridge-handshake-signal');
                 }
             } catch (e) { console.error(e); }
@@ -206,7 +226,7 @@ function HomeContent() {
     // Check frequently to catch the tab close quickly
     const interval = setInterval(checkStorage, 500);
 
-    // Also listen for the event directly
+    // Also listen for the event directly (instant reaction)
     const handleStorage = (e: StorageEvent) => { 
         if (e.key === 'bridge-handshake-signal') checkStorage(); 
     };
@@ -240,6 +260,7 @@ function HomeContent() {
     setIframeUrl(null);
     setTosUrl(null);
     setCustomerData(null);
+    setIsSyncing(false); // Reset overlay
 
     try {
       const res = await fetch('/api/create-kyb', {
@@ -280,6 +301,7 @@ function HomeContent() {
     setKybUrl(null);
     setIframeUrl(null);
     setTosUrl(null);
+    setIsSyncing(false);
     setFormData({ email: '', fullName: '' });
   };
 
@@ -410,6 +432,30 @@ function HomeContent() {
                           <p className="text-sm text-slate-500 italic">No endorsements found.</p>
                         )}
                     </div>
+
+                    {/* Capabilities Column */}
+                    <div className="p-6 space-y-6 bg-slate-800/20">
+                        <div>
+                            <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-4 flex items-center gap-2">
+                                <span className="w-2 h-2 rounded-full bg-purple-500"></span>
+                                Capabilities
+                            </h3>
+                            <div className="space-y-3">
+                                {customerData?.capabilities ? (
+                                    Object.entries(customerData.capabilities).map(([key, val]) => (
+                                        <div key={key} className="flex justify-between items-center text-xs">
+                                            <span className="text-slate-400">{formatLabel(key)}</span>
+                                            <span className={`font-mono font-bold uppercase ${val === 'active' ? 'text-green-400' : 'text-yellow-500'}`}>
+                                                {val}
+                                            </span>
+                                        </div>
+                                    ))
+                                ) : (
+                                    <p className="text-xs text-slate-500">No capabilities data yet.</p>
+                                )}
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </section>
         )}
@@ -469,6 +515,21 @@ function HomeContent() {
                         title="Bridge KYB Verification"
                         allow="camera; microphone; geolocation; encrypted-media; fullscreen" 
                     />
+
+                    {/* --- SYNC OVERLAY --- */}
+                    {/* This covers the iframe when user is active in another tab */}
+                    {isSyncing && (
+                      <div className="absolute inset-0 bg-white/90 backdrop-blur-sm z-10 flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-200">
+                         <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
+                         <h3 className="text-lg font-bold text-slate-800">Please continue in the new tab</h3>
+                         <p className="text-slate-500 max-w-sm mt-2">
+                           We detected that the verification flow opened in a new window. Please complete it there.
+                         </p>
+                         <p className="text-slate-400 text-xs mt-4">
+                           This view will update automatically when you finish.
+                         </p>
+                      </div>
+                    )}
                 </div>
             </div>
           ) : (
