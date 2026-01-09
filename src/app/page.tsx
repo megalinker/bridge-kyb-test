@@ -102,22 +102,6 @@ function HomeContent() {
   const isHoveringIframe = useRef(false);
 
   // ---------------------------------------------------------------------------
-  // 1. FOCUS DETECTOR (Detects clicking "Open New Tab" inside Iframe)
-  // ---------------------------------------------------------------------------
-  useEffect(() => {
-    const handleBlur = () => {
-      // If window lost focus WHILE mouse was over iframe, user likely clicked a link inside it
-      if (document.activeElement instanceof HTMLIFrameElement || isHoveringIframe.current) {
-        console.log("[Main] Window blurred while interacting with iframe -> Assuming New Tab opened.");
-        setIsSyncing(true);
-      }
-    };
-
-    window.addEventListener('blur', handleBlur);
-    return () => window.removeEventListener('blur', handleBlur);
-  }, []);
-
-  // ---------------------------------------------------------------------------
   // DEBUG: IFRAME MESSAGE SPY
   // ---------------------------------------------------------------------------
   useEffect(() => {
