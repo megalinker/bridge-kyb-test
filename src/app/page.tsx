@@ -140,18 +140,18 @@ function HomeContent() {
   useEffect(() => {
     if (!customerData) return;
 
-    // Define "Done" states for Part 1 of the form
-    const isPartOneDone = 
-        customerData.status === 'awaiting_ubo' || 
+    // FIX: Removed 'awaiting_ubo' from this list. 
+    // We only close the iframe if the process is TRULY finished or requires human review.
+    const isTerminalState = 
         customerData.status === 'manual_review' || 
         customerData.status === 'active' ||
         customerData.status === 'rejected';
 
     // If the iframe is open BUT the status says we are done, close the iframe.
-    if (iframeUrl && isPartOneDone) {
-        console.log(`[Main] Status transitioned to '${customerData.status}'. Closing Iframe.`);
+    if (iframeUrl && isTerminalState) {
+        console.log(`[Main] Status transitioned to terminal state '${customerData.status}'. Closing Iframe.`);
         setIframeUrl(null); 
-        setIsSyncing(false); // Remove overlay if iframe is gone
+        setIsSyncing(false); 
     }
   }, [customerData, iframeUrl]);
 
@@ -533,15 +533,15 @@ function HomeContent() {
                 </div>
             </div>
           ) : (
-             // --- STATE 2: SUCCESS / WAITING UBO ---
-             customerData?.status === 'awaiting_ubo' && (
+             // --- STATE 2: TERMINAL STATUSES ---
+             (customerData?.status === 'manual_review' || customerData?.status === 'active' || customerData?.status === 'rejected') && (
                 <div className="mt-8 p-10 bg-green-50 border border-green-100 rounded-2xl text-center animate-in slide-in-from-bottom-5 duration-500">
                     <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl">✓</div>
-                    <h3 className="text-xl font-bold text-green-800">Part 1 Verification Submitted</h3>
+                    <h3 className="text-xl font-bold text-green-800">Verification Submitted</h3>
                     <p className="text-green-700 mt-2 max-w-lg mx-auto">
-                        The business verification step is complete. The system is now <strong>Awaiting UBO</strong> (Beneficial Owner) details.
+                        The process has reached a terminal state.
                         <br/>
-                        <span className="text-xs mt-2 block opacity-75">Please check your email for the next steps or wait for manual review.</span>
+                        <span className="font-bold uppercase mt-2 block">{formatLabel(customerData.status)}</span>
                     </p>
                 </div>
              )
