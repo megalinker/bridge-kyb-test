@@ -3,7 +3,6 @@ import { v4 as uuidv4 } from 'uuid';
 
 export async function POST(req: Request) {
     const BRIDGE_API_KEY = process.env.BRIDGE_API_KEY;
-    // Use env var or fallback to sandbox
     const BRIDGE_API_URL = process.env.BRIDGE_API_URL || 'https://api.sandbox.bridge.xyz/v0';
     
     const { protocol, host } = new URL(req.url);
@@ -17,7 +16,6 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'Email is required' }, { status: 400 });
         }
 
-        // Updated Fetch URL
         const response = await fetch(`${BRIDGE_API_URL}/kyc_links`, {
             method: 'POST',
             headers: {
@@ -29,7 +27,9 @@ export async function POST(req: Request) {
                 type: "business",
                 email: email,
                 full_name: fullName,
-                redirect_url: baseUrl // Bridge will append ?inquiry-id=... to this
+                // FIX: Point this explicitly to the callback so the ID is attached correctly
+                // regardless of whether the flow ends via API config or Widget config.
+                redirect_url: `${baseUrl}/kyb-callback` 
             })
         });
 

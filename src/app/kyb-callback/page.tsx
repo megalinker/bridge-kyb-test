@@ -6,96 +6,81 @@ import { useSearchParams, useRouter } from 'next/navigation';
 function CallbackContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const [status, setStatus] = useState('Initializing...');
-  const [inquiryId, setInquiryId] = useState<string | null>(null);
+  const [debugLog, setDebugLog] = useState<string[]>([]);
+  const [status, setStatus] = useState('Checking URL parameters...');
+
+  const addLog = (msg: string) => setDebugLog(prev => [...prev, `${new Date().toISOString().split('T')[1].slice(0,8)}: ${msg}`]);
 
   useEffect(() => {
-    const id = searchParams.get('inquiry-id');
-    console.log("[Callback] Page loaded. Found Inquiry ID:", id);
+    // 1. DUMP ALL PARAMS TO SCREEN FOR DEBUGGING
+    const params: Record<string, string> = {};
+    searchParams.forEach((value, key) => {
+      params[key] = value;
+    });
+    addLog(`Received Params: ${JSON.stringify(params)}`);
+
+    // 2. CHECK FOR ANY VARIATION OF ID
+    const id = searchParams.get('inquiry-id') || 
+               searchParams.get('inquiry_id') || 
+               searchParams.get('inquiryId') || 
+               searchParams.get('reference_id');
 
     if (!id) {
-      setStatus("Error: No Inquiry ID found in URL.");
+      setStatus("⚠️ No Inquiry ID found.");
+      addLog("Critical: Bridge redirected here but didn't attach an ID.");
+      addLog("Possible causes: Flow completed fully? API redirect_url conflict?");
+      
+      // Fallback: If no ID, we assume the user might be DONE. 
+      // We send a generic 'REFRESH' signal instead of a 'RESUME' signal.
+      sendSignal(null, 'BRIDGE_REFRESH_ONLY');
       return;
     }
 
-    setInquiryId(id);
-    setStatus("Broadcasting signal to main tab...");
+    setStatus("✅ ID Found. Broadcasting...");
+    addLog(`ID found: ${id}`);
+    sendSignal(id, 'BRIDGE_INQUIRY_RESUME');
 
-    // 1. Write to LocalStorage (This is the signal)
+  }, [searchParams]);
+
+  const sendSignal = (id: string | null, type: string) => {
     const payload = JSON.stringify({
       inquiryId: id,
+      type: type, // New field to tell parent what to do
       timestamp: Date.now()
     });
 
     try {
       localStorage.setItem('bridge-handshake-signal', payload);
-      console.log("[Callback] Wrote to LocalStorage:", payload);
-      setStatus("Signal sent. Waiting for main tab...");
+      addLog("Wrote to LocalStorage.");
     } catch (e) {
-      console.error("[Callback] Storage Error:", e);
-      setStatus("Error writing to storage.");
+      addLog(`Storage Error: ${e}`);
     }
 
-    // 2. Attempt PostMessage (Backup for direct popups)
     if (window.opener) {
-      console.log("[Callback] Found window.opener. Posting message...");
-      window.opener.postMessage({ type: 'BRIDGE_INQUIRY_RESUME', inquiryId: id }, '*');
-    }
-
-    // 3. Auto-close timer (Optional - currently disabled to let you debug)
-    // You can uncomment this later if it works perfectly
-    /*
-    setTimeout(() => {
-       window.close();
-    }, 3000);
-    */
-
-  }, [searchParams]);
-
-  const handleContinueHere = () => {
-    if (inquiryId) {
-      console.log("[Callback] User chose to continue in this tab.");
-      // Redirect to the main app, carrying the ID
-      router.push(`/?inquiry-id=${inquiryId}`);
+      addLog("Found opener. Posting message...");
+      window.opener.postMessage({ type, inquiryId: id }, '*');
     }
   };
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-slate-50 p-6 font-sans">
-      <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full text-center border border-slate-200">
-        <h1 className="text-xl font-bold text-slate-900 mb-2">Resume Verification</h1>
-
-        <div className="bg-slate-100 p-3 rounded font-mono text-xs text-left mb-4 overflow-x-auto text-slate-600 border border-slate-200">
-          <div className="font-bold text-slate-400 mb-1">DEBUG LOG:</div>
-          {status}
-          <br />
-          ID: {inquiryId || 'None'}
+    <div className="min-h-screen bg-slate-900 text-slate-300 p-6 font-mono text-sm">
+      <div className="max-w-2xl mx-auto space-y-6">
+        <h1 className="text-xl font-bold text-white mb-2 border-b border-slate-700 pb-2">Debug Callback</h1>
+        
+        <div className="bg-slate-800 p-4 rounded-lg border border-slate-700">
+          <p className="text-yellow-400 font-bold mb-2">STATUS: {status}</p>
+          <div className="space-y-1">
+            {debugLog.map((log, i) => <div key={i}>{log}</div>)}
+          </div>
         </div>
 
-        <p className="text-slate-600 mb-6 text-sm">
-          We sent a signal to your original tab to refresh the frame.
-        </p>
-
-        <div className="space-y-3">
-          <button
-            onClick={() => window.close()}
-            className="w-full py-3 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-xl font-bold transition-colors"
-          >
-            Close this Tab (Try first)
-          </button>
-
-          <div className="relative flex py-2 items-center">
-            <div className="flex-grow border-t border-slate-200"></div>
-            <span className="flex-shrink-0 mx-4 text-slate-400 text-xs uppercase">OR</span>
-            <div className="flex-grow border-t border-slate-200"></div>
-          </div>
-
-          <button
-            onClick={handleContinueHere}
-            className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold transition-colors shadow-lg shadow-blue-200"
-          >
-            Continue in this Window ➔
-          </button>
+        <div className="flex gap-4">
+            <button onClick={() => window.close()} className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded font-bold">
+                Close Tab
+            </button>
+            <button onClick={() => router.push('/')} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded font-bold">
+                Go to Home (Manual)
+            </button>
         </div>
       </div>
     </div>
@@ -104,7 +89,7 @@ function CallbackContent() {
 
 export default function KybCallbackPage() {
   return (
-    <Suspense fallback={<div className="p-10 text-center">Loading...</div>}>
+    <Suspense fallback={<div className="p-10 text-white">Loading...</div>}>
       <CallbackContent />
     </Suspense>
   );
