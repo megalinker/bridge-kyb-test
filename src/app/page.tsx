@@ -63,52 +63,103 @@ const extractMissingFields = (logic: RequirementLogic | undefined): string[] => 
 };
 
 export default function Home() {
+  // Data State
   const [events, setEvents] = useState<BridgeEvent[]>([]);
-  const [activeEmail, setActiveEmail] = useState<string | null>(null);
-  const [customerId, setCustomerId] = useState<string | null>(null);
   const [customerData, setCustomerData] = useState<CustomerData | null>(null);
   
-  const [kybUrl, setKybUrl] = useState<string | null>(null); // The raw link from Bridge
-  const [iframeUrl, setIframeUrl] = useState<string | null>(null); // The transformed link for the iframe
+  // Session State
+  const [activeEmail, setActiveEmail] = useState<string | null>(null);
+  const [customerId, setCustomerId] = useState<string | null>(null);
   
+  // Link & UI State
+  const [kybUrl, setKybUrl] = useState<string | null>(null); // Raw Bridge Link
+  const [iframeUrl, setIframeUrl] = useState<string | null>(null); // Transformed Widget Link
   const [tosUrl, setTosUrl] = useState<string | null>(null);
+  
+  // Loading & UX State
   const [loading, setLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [formData, setFormData] = useState({ email: '', fullName: '' });
 
-  // 1. URL TRANSFORMATION LOGIC (The Fix)
-  useEffect(() => {
-    if (!kybUrl) {
-      setIframeUrl(null);
-      return;
-    }
-
+  // ---------------------------------------------------------------------------
+  // 1. URL GENERATOR (The Core Logic)
+  // ---------------------------------------------------------------------------
+  const generateWidgetUrl = useCallback((originalUrl: string | null, inquiryId?: string) => {
+    if (!originalUrl && !inquiryId) return null;
+    
     try {
-      const urlObj = new URL(kybUrl);
+      let finalUrl = '';
 
-      // A. Replace '/verify' with '/widget' to enable embedding
-      // Handle cases where path might be /verify or /verify/
-      const pathname = urlObj.pathname.replace(/\/verify(\/)?/, '/widget$1');
-      urlObj.pathname = pathname;
-
-      // B. Add the iframe-origin parameter (Client-side only)
-      if (typeof window !== 'undefined') {
-        urlObj.searchParams.set('iframe-origin', window.location.origin);
+      if (inquiryId) {
+        // CASE A: Resuming via Inquiry ID (e.g. captured from the redirect popup)
+        const baseUrl = 'https://bridge.withpersona.com/widget';
+        const params = new URLSearchParams();
+        params.set('inquiry-id', inquiryId);
+        
+        if (typeof window !== 'undefined') {
+          params.set('iframe-origin', window.location.origin);
+          // Vital: Redirect back to our callback to close the tab and resume here
+          params.set('redirect-uri', `${window.location.origin}/kyb-callback`);
+        }
+        finalUrl = `${baseUrl}?${params.toString()}`;
+      } else if (originalUrl) {
+        // CASE B: Starting fresh from a Bridge Link
+        const urlObj = new URL(originalUrl);
+        
+        // Transform /verify -> /widget for embedding
+        const pathname = urlObj.pathname.replace(/\/verify(\/)?/, '/widget$1');
+        urlObj.pathname = pathname;
+        
+        if (typeof window !== 'undefined') {
+           urlObj.searchParams.set('iframe-origin', window.location.origin);
+           // Vital: Redirect back to our callback to close the tab and resume here
+           urlObj.searchParams.set('redirect-uri', `${window.location.origin}/kyb-callback`);
+        }
+        finalUrl = urlObj.toString();
       }
 
-      const widgetUrl = urlObj.toString();
-      console.log("Transformed Bridge URL for Iframe:", widgetUrl);
-      setIframeUrl(widgetUrl);
+      return finalUrl;
 
     } catch (e) {
-      console.error("Failed to transform Bridge URL:", e);
-      // Fallback to original, though it will likely fail X-Frame-Options
-      setIframeUrl(kybUrl);
+      console.error("URL Generation Error:", e);
+      return originalUrl;
     }
-  }, [kybUrl]);
+  }, []);
 
-  // 2. Load Session
+  // ---------------------------------------------------------------------------
+  // 2. EFFECTS
+  // ---------------------------------------------------------------------------
+
+  // Effect: Transform the raw Bridge URL when it changes
+  useEffect(() => {
+    if (kybUrl) {
+      const widgetLink = generateWidgetUrl(kybUrl);
+      console.log("Setting Iframe URL:", widgetLink);
+      setIframeUrl(widgetLink);
+    }
+  }, [kybUrl, generateWidgetUrl]);
+
+  // Effect: Listen for the "Tab Handshake" from /kyb-callback
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      // Security: Only accept messages from our own domain
+      if (event.origin !== window.location.origin) return;
+
+      if (event.data?.type === 'BRIDGE_INQUIRY_RESUME' && event.data?.inquiryId) {
+        console.log("Received Handshake: Resuming Inquiry", event.data.inquiryId);
+        
+        // Update the iframe to point to the specific inquiry ID
+        const resumeUrl = generateWidgetUrl(null, event.data.inquiryId);
+        setIframeUrl(resumeUrl);
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [generateWidgetUrl]);
+
+  // Effect: Load Session from LocalStorage
   useEffect(() => {
     const savedEmail = localStorage.getItem('bridge_active_email');
     const savedCustomerId = localStorage.getItem('bridge_active_customer_id');
@@ -119,7 +170,7 @@ export default function Home() {
     if (savedCustomerId) setCustomerId(savedCustomerId);
   }, []);
 
-  // 3. Poll Webhooks
+  // Effect: Poll Webhooks
   useEffect(() => {
     if (!activeEmail) return;
     const fetchEvents = async () => {
@@ -133,7 +184,7 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [activeEmail]);
 
-  // 4. Fetch Customer Status
+  // Effect: Poll Customer Status
   const fetchCustomerStatus = useCallback(async () => {
     if (!customerId) return;
     setIsRefreshing(true);
@@ -150,10 +201,15 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [fetchCustomerStatus]);
 
+  // ---------------------------------------------------------------------------
+  // 3. HANDLERS
+  // ---------------------------------------------------------------------------
+
   const handleCreateKyb = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setKybUrl(null);
+    setIframeUrl(null);
     setTosUrl(null);
     setCustomerData(null);
 
@@ -165,7 +221,7 @@ export default function Home() {
       });
       const data = await res.json();
       if (data.kyc_link) {
-        setKybUrl(data.kyc_link);
+        setKybUrl(data.kyc_link); // This triggers the useEffect above
         setTosUrl(data.tos_link);
         setActiveEmail(formData.email);
         localStorage.setItem('bridge_active_email', formData.email);
@@ -188,6 +244,7 @@ export default function Home() {
     setCustomerData(null);
     setEvents([]);
     setKybUrl(null);
+    setIframeUrl(null);
     setTosUrl(null);
     setFormData({ email: '', fullName: '' });
   };
@@ -210,6 +267,9 @@ export default function Home() {
     }
   };
 
+  // ---------------------------------------------------------------------------
+  // 4. RENDER
+  // ---------------------------------------------------------------------------
   return (
     <main className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-900">
       <div className="max-w-5xl mx-auto space-y-6">
@@ -236,7 +296,6 @@ export default function Home() {
         {/* --- DETAILED CUSTOMER DASHBOARD --- */}
         {customerId && (
             <section className="bg-slate-900 rounded-2xl shadow-xl border border-slate-700 text-slate-300 overflow-hidden">
-                {/* Header */}
                 <div className="p-6 border-b border-slate-700 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-slate-800/50">
                     <div>
                         <div className="flex items-center gap-3">
@@ -258,7 +317,6 @@ export default function Home() {
                     </div>
 
                     <div className="flex gap-3">
-                        {/* Overall Status */}
                         <div className="flex flex-col items-end">
                             <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Status</span>
                             <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide shadow-sm ${getStatusColor(customerData?.status)}`}>
@@ -268,9 +326,7 @@ export default function Home() {
                     </div>
                 </div>
 
-                {/* Dashboard Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-slate-700">
-                    {/* COL 1: Endorsements */}
                     <div className="p-6 md:col-span-2 space-y-6">
                         <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
                             <span className="w-2 h-2 rounded-full bg-blue-500"></span>
@@ -319,7 +375,6 @@ export default function Home() {
                         )}
                     </div>
 
-                    {/* COL 2: Capabilities */}
                     <div className="p-6 space-y-6 bg-slate-800/20">
                         <div>
                             <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-4 flex items-center gap-2">
@@ -346,7 +401,7 @@ export default function Home() {
             </section>
         )}
 
-        {/* --- FORM SECTION --- */}
+        {/* --- FORM & IFRAME SECTION --- */}
         <section className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
           <h2 className="text-lg font-semibold mb-4 text-slate-800">
             {activeEmail ? "Verification Session" : "Start Onboarding Flow"}
@@ -368,26 +423,35 @@ export default function Home() {
             </div>
           </form>
 
-          {/* --- EMBEDDED IFRAME SECTION --- */}
+          {/* --- THE IFRAME --- */}
           {iframeUrl && (
             <div className="mt-8 pt-8 border-t border-slate-100 animate-in fade-in zoom-in duration-300">
                 <div className="flex justify-between items-center mb-4">
-                    <h3 className="font-bold text-slate-800">Onboarding Interface</h3>
+                    <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                        {iframeUrl.includes('inquiry-id') ? (
+                          <>
+                            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                            Resuming Verification...
+                          </>
+                        ) : 'Identity Verification'}
+                    </h3>
                     <div className="flex gap-2">
                         {tosUrl && !customerData?.has_accepted_terms_of_service && (
                              <a href={tosUrl} target="_blank" rel="noreferrer" className="text-xs font-bold bg-white border border-slate-300 px-3 py-1.5 rounded hover:bg-slate-50 text-slate-700">
                                 Open TOS ↗
                              </a>
                         )}
+                        <a href={iframeUrl} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center">
+                            Open in new tab (Fallback) ↗
+                        </a>
                     </div>
                 </div>
 
-                {/* THE LITERAL FRAME COMPONENT */}
-                <div className="w-full rounded-2xl border border-slate-200 overflow-hidden shadow-md bg-slate-50">
+                <div className="w-full rounded-2xl border border-slate-200 overflow-hidden shadow-md bg-slate-50 relative">
                     <iframe 
-                        key={iframeUrl} // Force reload if URL changes
+                        key={iframeUrl} // Force reload when URL changes (essential for the redirect/resume flow)
                         src={iframeUrl}
-                        className="w-full h-[700px] border-none bg-white"
+                        className="w-full h-[750px] border-none bg-white"
                         title="Bridge KYB Verification"
                         allow="camera; microphone; geolocation; encrypted-media; fullscreen" 
                     />
