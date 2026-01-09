@@ -66,28 +66,50 @@ export default function Home() {
   const [events, setEvents] = useState<BridgeEvent[]>([]);
   const [activeEmail, setActiveEmail] = useState<string | null>(null);
   const [customerId, setCustomerId] = useState<string | null>(null);
-  
   const [customerData, setCustomerData] = useState<CustomerData | null>(null);
-  const [kybUrl, setKybUrl] = useState<string | null>(null);
+  
+  const [kybUrl, setKybUrl] = useState<string | null>(null); // The raw link from Bridge
+  const [iframeUrl, setIframeUrl] = useState<string | null>(null); // The transformed link for the iframe
+  
   const [tosUrl, setTosUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [isInsideIframe, setIsInsideIframe] = useState(false);
-
   const [formData, setFormData] = useState({ email: '', fullName: '' });
 
-  // 1. Check if we are the parent or the child (iframe)
+  // 1. URL TRANSFORMATION LOGIC (The Fix)
   useEffect(() => {
-    // If window.self !== window.top, we are running inside the iframe (after redirect)
-    if (typeof window !== 'undefined' && window.self !== window.top) {
-        setIsInsideIframe(true);
+    if (!kybUrl) {
+      setIframeUrl(null);
+      return;
     }
-  }, []);
+
+    try {
+      const urlObj = new URL(kybUrl);
+
+      // A. Replace '/verify' with '/widget' to enable embedding
+      // Handle cases where path might be /verify or /verify/
+      const pathname = urlObj.pathname.replace(/\/verify(\/)?/, '/widget$1');
+      urlObj.pathname = pathname;
+
+      // B. Add the iframe-origin parameter (Client-side only)
+      if (typeof window !== 'undefined') {
+        urlObj.searchParams.set('iframe-origin', window.location.origin);
+      }
+
+      const widgetUrl = urlObj.toString();
+      console.log("Transformed Bridge URL for Iframe:", widgetUrl);
+      setIframeUrl(widgetUrl);
+
+    } catch (e) {
+      console.error("Failed to transform Bridge URL:", e);
+      // Fallback to original, though it will likely fail X-Frame-Options
+      setIframeUrl(kybUrl);
+    }
+  }, [kybUrl]);
 
   // 2. Load Session
   useEffect(() => {
-    if (isInsideIframe) return; // Don't load session logic if we are just the success page
     const savedEmail = localStorage.getItem('bridge_active_email');
     const savedCustomerId = localStorage.getItem('bridge_active_customer_id');
     if (savedEmail) {
@@ -95,11 +117,11 @@ export default function Home() {
       setFormData(prev => ({ ...prev, email: savedEmail }));
     }
     if (savedCustomerId) setCustomerId(savedCustomerId);
-  }, [isInsideIframe]);
+  }, []);
 
   // 3. Poll Webhooks
   useEffect(() => {
-    if (!activeEmail || isInsideIframe) return;
+    if (!activeEmail) return;
     const fetchEvents = async () => {
       try {
         const res = await fetch(`/api/events?email=${encodeURIComponent(activeEmail)}`);
@@ -109,18 +131,18 @@ export default function Home() {
     fetchEvents();
     const interval = setInterval(fetchEvents, 3000);
     return () => clearInterval(interval);
-  }, [activeEmail, isInsideIframe]);
+  }, [activeEmail]);
 
   // 4. Fetch Customer Status
   const fetchCustomerStatus = useCallback(async () => {
-    if (!customerId || isInsideIframe) return;
+    if (!customerId) return;
     setIsRefreshing(true);
     try {
       const res = await fetch(`/api/customer?id=${customerId}`);
       if (res.ok) setCustomerData(await res.json());
     } catch (err) { console.error(err); } 
     finally { setIsRefreshing(false); }
-  }, [customerId, isInsideIframe]);
+  }, [customerId]);
 
   useEffect(() => {
     fetchCustomerStatus();
@@ -188,18 +210,6 @@ export default function Home() {
     }
   };
 
-  // --- SPECIAL RENDER FOR IFRAME REDIRECT (SUCCESS STATE) ---
-  if (isInsideIframe) {
-      return (
-          <div className="min-h-screen bg-green-50 flex flex-col items-center justify-center p-4">
-              <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-4 text-3xl">✓</div>
-              <h1 className="text-xl font-bold text-green-800">Process Complete</h1>
-              <p className="text-green-700 mt-2 text-center">You can close this verification window now.</p>
-          </div>
-      );
-  }
-
-  // --- MAIN RENDER ---
   return (
     <main className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-900">
       <div className="max-w-5xl mx-auto space-y-6">
@@ -342,7 +352,6 @@ export default function Home() {
             {activeEmail ? "Verification Session" : "Start Onboarding Flow"}
           </h2>
           
-          {/* Show form only if not deeply engaged in KYC or if user wants to reset */}
           <form onSubmit={handleCreateKyb} className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
             <div className="space-y-1">
               <label className="text-xs font-bold text-slate-500 uppercase ml-1">Business Email</label>
@@ -360,8 +369,8 @@ export default function Home() {
           </form>
 
           {/* --- EMBEDDED IFRAME SECTION --- */}
-          {kybUrl && (
-            <div className="mt-8 pt-8 border-t border-slate-100">
+          {iframeUrl && (
+            <div className="mt-8 pt-8 border-t border-slate-100 animate-in fade-in zoom-in duration-300">
                 <div className="flex justify-between items-center mb-4">
                     <h3 className="font-bold text-slate-800">Onboarding Interface</h3>
                     <div className="flex gap-2">
@@ -370,20 +379,17 @@ export default function Home() {
                                 Open TOS ↗
                              </a>
                         )}
-                        <a href={kybUrl} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center">
-                            Open in new tab (Fallback) ↗
-                        </a>
                     </div>
                 </div>
 
                 {/* THE LITERAL FRAME COMPONENT */}
-                <div className="w-full rounded-2xl border border-slate-200 overflow-hidden shadow-sm bg-slate-50">
+                <div className="w-full rounded-2xl border border-slate-200 overflow-hidden shadow-md bg-slate-50">
                     <iframe 
-                        key={kybUrl} // Force reload if URL changes
-                        src={kybUrl}
+                        key={iframeUrl} // Force reload if URL changes
+                        src={iframeUrl}
                         className="w-full h-[700px] border-none bg-white"
                         title="Bridge KYB Verification"
-                        allow="camera; microphone; geolocation; encrypted-media;" // Permissions required for ID verification
+                        allow="camera; microphone; geolocation; encrypted-media; fullscreen" 
                     />
                 </div>
             </div>
