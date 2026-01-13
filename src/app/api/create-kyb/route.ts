@@ -3,11 +3,12 @@ import { v4 as uuidv4 } from 'uuid';
 
 export async function POST(req: Request) {
     const BRIDGE_API_KEY = process.env.BRIDGE_API_KEY;
+    const BRIDGE_API_URL = process.env.BRIDGE_API_URL || 'https://api.sandbox.bridge.xyz/v0';
+    
     const { protocol, host } = new URL(req.url);
     const baseUrl = `${protocol}//${host}`;
 
     try {
-        // 1. Read user input from the Frontend
         const body = await req.json();
         const { email, fullName } = body;
 
@@ -15,8 +16,7 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'Email is required' }, { status: 400 });
         }
 
-        // 2. Call Bridge API with the user's data
-        const response = await fetch('https://api.bridge.xyz/v0/kyc_links', {
+        const response = await fetch(`${BRIDGE_API_URL}/kyc_links`, {
             method: 'POST',
             headers: {
                 'Api-Key': BRIDGE_API_KEY || '',
@@ -26,8 +26,10 @@ export async function POST(req: Request) {
             body: JSON.stringify({
                 type: "business",
                 email: email,
-                full_name: fullName, // Pass the name if provided
-                redirect_url: baseUrl
+                full_name: fullName,
+                // FIX: Point this explicitly to the callback so the ID is attached correctly
+                // regardless of whether the flow ends via API config or Widget config.
+                redirect_url: `${baseUrl}/kyb-callback` 
             })
         });
 
@@ -40,6 +42,7 @@ export async function POST(req: Request) {
 
         return NextResponse.json(data);
     } catch (error: any) {
+        console.error("Create KYB Error:", error);
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
