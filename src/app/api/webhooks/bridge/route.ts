@@ -6,6 +6,8 @@ export const runtime = 'nodejs';
 
 export async function POST(req: NextRequest) {
   try {
+    console.log('Webhook received from Bridge');
+
     const rawBody = await req.text();
     const signature = req.headers.get('X-Webhook-Signature');
 
@@ -20,6 +22,8 @@ export async function POST(req: NextRequest) {
     }
 
     const event = JSON.parse(rawBody);
+
+    console.log('Webhook event:', event);
 
     // FIX: Bridge uses 'event_id' and 'event_type'
     const eventId = event.event_id;
